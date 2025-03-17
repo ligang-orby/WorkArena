@@ -1,49 +1,19 @@
-import inspect
-import logging
-from collections import OrderedDict
-from copy import deepcopy
 import json
-
-from faker import Faker
-
-fake = Faker()
 
 import playwright.sync_api
 from playwright.sync_api._generated import Page
 
-from browsergym.workarena.tasks.knowledge import KnowledgeBaseSearchTask
-from browsergym.workarena.tasks.list import FilterListTask
 from browsergym.workarena.tasks.navigation import AllMenuTask
 
-from ...api.problem import create_problem
-from ...api.user import create_user
-from ...api.utils import db_delete_from_table, table_api_call
 from ..compositional.base import CompositionalTask
 from ..compositional.base import AbstractServiceNowTask
 from ...instance import SNowInstance
-from ..form import CreateUserTask, CreateHardwareAssetTask
+from ..form import CreateUserTask
 from ..service_catalog import (
     OrderAppleMacBookPro15Task,
     OrderDevelopmentLaptopPCTask,
     OrderStandardLaptopTask,
     OrderSalesLaptopTask,
-)
-from ..compositional.workload_balancing import WorkloadBalancingLargeTask
-from ..compositional.mark_duplicate_problems import (
-    HighPriorityFilterProblemsAndMarkDuplicatesLargeTask,
-)
-from ..compositional.maximize_investment_return import (
-    FilterRandomExpensesAndSelectInvestmentsSmallTask,
-)
-from ..compositional.offboard_user import OffBoardUserTask
-from ...config import (
-    # Expected columns for the different lists
-    SNOW_BROWSER_TIMEOUT,
-    SNOW_JS_UTILS_FILEPATH,
-    EXPECTED_PROBLEM_COLUMNS_PATH,
-    CREATE_USER_CONFIG_PATH,
-    EXPECTED_USER_FORM_FIELDS_PATH,
-    CREATE_HARDWARE_CONFIG_PATH,
 )
 
 
@@ -173,11 +143,13 @@ class OnBoardUserConditionalTask(CompositionalTask):
         candidate_index = self.random.choice(len(candidate_tasks))
         candidate_department, candidate_task = candidate_tasks[candidate_index]
 
+        # Sample the target task configuration with quantity 1.
         with open(target_task.config_path, "r") as f:
             target_task_config = json.load(f)
             target_task_config = [c for c in target_task_config if c["quantity"] == 1]
             target_task_config = self.random.choice(target_task_config)
 
+        # Sample the candidate task configuration with quantity 1.
         with open(candidate_task.config_path, "r") as f:
             candidate_task_config = json.load(f)
             candidate_task_config = [c for c in candidate_task_config if c["quantity"] == 1]
@@ -196,14 +168,7 @@ class OnBoardUserConditionalTask(CompositionalTask):
         user_config = self.random.choice(self.all_user_configs)
         department = user_config["template_record"]["department"]
 
-        (
-            target_task,
-            target_task_config,
-            candidate_department,
-            candidate_task,
-            candidate_task_config,
-        ) = self._get_target_and_candidate_tasks(department)
-
+        # Create the create user subtask
         create_user_subtask = [
             # Navigate to the user list
             AllMenuTask(
@@ -225,12 +190,23 @@ class OnBoardUserConditionalTask(CompositionalTask):
             ),
         ]
 
+        # Get the target task and the candidate tasks
+        (
+            target_task,
+            target_task_config,
+            candidate_department,
+            candidate_task,
+            candidate_task_config,
+        ) = self._get_target_and_candidate_tasks(department)
+
+        # Create the target task instance
         target_task_instance = target_task(
             instance=self.instance,
             fixed_config=target_task_config,
             is_validated=True,
             used_in_level_2=True,
         )
+        # Create the candidate task instance
         candidate_task_instance = candidate_task(
             instance=self.instance,
             fixed_config=candidate_task_config,
@@ -250,6 +226,7 @@ class OnBoardUserConditionalTask(CompositionalTask):
                 is_validated=False,
                 used_in_level_2=True,
             ),
+            # Conditional task with the target task as the true branch and the candidate task as the false branch
             ConditionalTask(
                 true_branch_task=target_task_instance,
                 true_branch_prefix=f"If the user department is {department}, ",
