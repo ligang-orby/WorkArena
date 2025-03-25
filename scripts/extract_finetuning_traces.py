@@ -21,10 +21,32 @@ from browsergym.core.env import BrowserEnv
 from browsergym.workarena import ALL_WORKARENA_TASKS
 from collections import defaultdict
 from tenacity import retry, stop_after_attempt, wait_fixed
+from time import sleep
 from time import time
 
+from browsergym.workarena import (
+    DASHBOARD_TASKS,
+    FORM_TASKS,
+    KB_TASKS,
+    LIST_TASKS,
+    NAVIGATION_TASKS,
+    SERVICE_CATALOG_TASKS,
+    UPDATE_TASKS,
+)
 
-N_PER_TASK = 10
+# Combine all L1 tasks.
+ALL_L1_TASKS = (
+    DASHBOARD_TASKS
+    + FORM_TASKS
+    + KB_TASKS
+    + LIST_TASKS
+    + NAVIGATION_TASKS
+    + SERVICE_CATALOG_TASKS
+    + UPDATE_TASKS
+)
+
+
+N_PER_TASK = 1
 
 
 def monkey_patch_playwright(observation_callback, trace_storage):
@@ -92,7 +114,7 @@ def monkey_patch_playwright(observation_callback, trace_storage):
                 print(f"Monkey patched {interface.__name__}.{action}")
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+# @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def extract_trace(task_cls, headless=True):
     """
     Extracts the trace of actions and observations for a given task.
@@ -111,8 +133,24 @@ def extract_trace(task_cls, headless=True):
     monkey_patch_playwright(observation_callback=env._get_obs, trace_storage=trace)
 
     env.reset()
+
+    # L1
     env.task.cheat(env.page, env.chat.messages)
+
+    # L2
+    # for i in range(len(env.task)):
+    #     sleep(1)
+    #     env.chat.add_message(role="assistant", msg=f'Executing subtask {i}: {env.task.subtasks[i]}')
+    #     env.task.cheat(page=env.page, chat_messages=env.chat.messages, subtask_idx=i)
+
+    reward, done, message, info = env.task.validate(page=env.page, chat_messages=env.chat.messages)
+   
+    if reward == 1:
+        env.chat.add_message(role="user", msg="Yes, that works. Thanks!")
+    else:
+        env.chat.add_message(role="user", msg=f"No, that doesn't work. {info.get('message', '')}")
     env.close()
+
 
     return trace
 
@@ -121,11 +159,21 @@ if __name__ == "__main__":
     os.makedirs("trace_profiling", exist_ok=True)
 
     task_traces = defaultdict(list)
-    for task in ALL_WORKARENA_TASKS:
+    for task in ALL_L1_TASKS:
+        if 'Order' not in str(task):
+            continue
         print("Task:", task)
         for i in range(N_PER_TASK):
             print(f"Extracting trace {i+1}/{N_PER_TASK}")
-            trace = extract_trace(task, headless=True)
-            task_traces[task].append(trace)
+            trace = extract_trace(task, headless=False)
+            for index, step in enumerate(trace):
+                print(f"Step {index}")
+                print('Screenshot shape:', step['obs']['screenshot'].shape)
+                element = step['obs']['extra_element_properties'].get(step['bid'])
+                bbox = element['bbox']
+                print('Action:', step['action'], 'BID:', step['bid'], 'Bounding box:', bbox, 'Args:', step['args'])
+                print('')
 
-    pickle.dump(task_traces, open("trace_profiling/task_traces.pkl", "wb"))
+            task_traces[task].append(trace)
+        break
+
