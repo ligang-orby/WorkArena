@@ -115,6 +115,15 @@ class OrderMultipleDevicesTask(CompositionalTask, HumanEvalTask):
 
         goal, info = super().setup_goal(page=page, config=config)
 
+        merged_goal = [self.subgoals[0], 'Go to the hardware store and order the following devices\n']
+        for i in range(1, len(config), 2):
+            merged_goal.append('Device: ' + config[i].requested_item)
+            merged_goal.append('Quantity: ' + str(config[i].quantity))
+            merged_goal.append('Configuration: ' + str(dict((k, v[1]) for k, v in config[i].requested_configuration.items())))
+
+        merged_goal = '\n'.join(merged_goal)
+        print(merged_goal)
+
         return goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
