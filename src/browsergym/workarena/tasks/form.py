@@ -445,6 +445,18 @@ class ServiceNowFormTask(AbstractServiceNowTask):
                 page.evaluate(f"{self.form_js_selector}.getLabelOf('{field}')"),
                 exact=True,
             )
+
+            # This is a hack to handle the work_notes field, which is a textarea. Multiple textarea fields are
+            # present in the form, so we need to find the visible one. It's used in EditProblemConditionalTask.
+            if field == "work_notes":
+                logging.debug("Finding visible work_notes textarea")
+                for i in range(control.count()):
+                    item_locator = control.nth(i)
+                    if item_locator.is_visible():
+                        logging.debug(f"Found visible work_notes textarea {i}")
+                        control = item_locator
+                        break
+
             if control.count() > 1:
                 control = control.nth(0)
             # If the field is in a section, click on its header to make it visible

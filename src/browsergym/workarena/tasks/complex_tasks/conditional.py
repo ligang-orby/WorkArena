@@ -8,8 +8,13 @@ from browsergym.workarena.tasks.navigation import AllMenuTask
 from ..compositional.base import CompositionalTask, HumanEvalTask
 from ..compositional.base import AbstractServiceNowTask
 from ...instance import SNowInstance
-from ..form import CreateUserTask, EditHardwareAssetTask
-from ..list import FilterHardwareListTask
+from ..form import (
+    CreateUserTask,
+    EditHardwareAssetTask,
+    EditRecordTask,
+    EditIncidentTask,
+)
+from ..list import FilterHardwareListTask, FilterIncidentListTask, FilterChangeRequestListTask
 from ..service_catalog import (
     OrderAppleMacBookPro15Task,
     OrderDevelopmentLaptopPCTask,
@@ -18,6 +23,11 @@ from ..service_catalog import (
 )
 from faker import Faker
 from ...api.utils import table_api_call
+from .comparison import FilterProblemListTask
+from ...config import (
+    EXPECTED_PROBLEM_FORM_FIELDS_PATH,
+    EXPECTED_CHANGE_REQUEST_FORM_FIELDS_PATH,
+)
 
 fake = Faker()
 
@@ -298,11 +308,13 @@ class EditHardwareConditionalTask(CompositionalTask, HumanEvalTask):
     def setup_goal(self, page: Page) -> tuple[str, dict]:
         # Sample a configuration
         config = self.fixed_config if self.fixed_config else self._get_config()
-        
+
         # Get the task description
-        self.short_description = f"Edit hardware asset {self.hardware_config['template_record']['asset_tag']}"
+        self.short_description = (
+            f"Edit hardware asset {self.hardware_config['template_record']['asset_tag']}"
+        )
         self.task_description = f'Referring to company protocol "{self.protocol_name}", edit the hardware asset based on its model category: \n'
-        
+
         if self.level == 2:
             self.task_description += (
                 f"\nFor {self.model_category} assets:\n"
@@ -316,17 +328,20 @@ class EditHardwareConditionalTask(CompositionalTask, HumanEvalTask):
     def _get_target_and_candidate_configs(self, model_category):
         # Get the target config and a random candidate config
         target_config = self._MODEL_CATEGORY_TO_CONFIG.get(model_category, self._DEFAULT_CONFIG)
-        
+
         # Get all possible configs except the target one
-        candidate_configs = [(cat, conf) for cat, conf in self._MODEL_CATEGORY_TO_CONFIG.items() 
-                           if cat != model_category]
+        candidate_configs = [
+            (cat, conf)
+            for cat, conf in self._MODEL_CATEGORY_TO_CONFIG.items()
+            if cat != model_category
+        ]
         if model_category not in self._MODEL_CATEGORY_TO_CONFIG:
             candidate_configs.append(("default", self._DEFAULT_CONFIG))
-        
+
         # Choose a random candidate
         random_index = self.random.randint(0, len(candidate_configs) - 1)
         candidate_category, candidate_config = candidate_configs[random_index]
-        
+
         return target_config, candidate_category, candidate_config
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
@@ -339,7 +354,9 @@ class EditHardwareConditionalTask(CompositionalTask, HumanEvalTask):
         self.assigned_to = self.hardware_config["template_record"]["assigned_to"]
 
         # Get the target and candidate configurations
-        target_config, candidate_category, candidate_config = self._get_target_and_candidate_configs(self.model_category)
+        target_config, candidate_category, candidate_config = (
+            self._get_target_and_candidate_configs(self.model_category)
+        )
 
         # Create the target task instance
         target_task = EditHardwareAssetTask(
@@ -400,16 +417,55 @@ class EditHardwareConditionalTask(CompositionalTask, HumanEvalTask):
         super().teardown()
 
 
+class EditProblemTask(EditRecordTask):
+    """
+    Task to edit a problem in the system.
+    We re-define this class for correct task description.
+    TODO: merged with the original EditProblemTask.
+    """
+
+    expected_fields_path = EXPECTED_PROBLEM_FORM_FIELDS_PATH
+
+    def __init__(
+        self,
+        seed: int = None,
+        instance=None,
+        fixed_config: dict = None,
+        new_values: dict = None,
+        record_sys_id: str = None,
+        record_number: str = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            seed=seed,
+            instance=instance,
+            form_url="/now/nav/ui/classic/params/target/problem.do",
+            table_label="problem",
+            prohibited_fields=["state", "first_reported_by_task"],
+            new_values=new_values,
+            fixed_config=fixed_config,
+            record_sys_id=record_sys_id,
+            record_number=record_number,
+        )
+        if self.new_values is None:
+            self.new_values = {"assigned_to": ""}
+        self.__dict__.update(kwargs)
+
+    def get_pretty_printed_description(self) -> str:
+        """
+        Get the task info for this task when used in a private task; Used in L3 compositional tasks.
+        """
+        if self.level == 2:
+            description = "Edit the problem record with the following values:\n"
+            for key, value in self.new_values.items():
+                description += f"- Set {key} to {value}\n"
+            return description
+        else:
+            return ""
+
+
 class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
-    """Conditional task for editing problems based on their impact."""
-
-    _IMPACT_TO_CONFIG = {
-        "1 - High": {"assigned_to": "", "priority": "1 - Critical"},
-        "2 - Medium": {"assigned_to": "", "priority": "2 - High"},
-        "3 - Low": {"assigned_to": "", "priority": "3 - Medium"},
-    }
-
-    _DEFAULT_CONFIG = {"assigned_to": "", "priority": "4 - Low"}
+    """Conditional task for editing problems based on their urgency."""
 
     def __init__(
         self,
@@ -419,7 +475,7 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
         level: int = 2,
     ) -> None:
         """
-        Create a task that edits problems differently based on their impact.
+        Create a task that edits problems differently based on their urgency.
 
         Parameters:
         -----------
@@ -441,64 +497,95 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
             level=level,
             protocol_name=self.protocol_name,
         )
-        self.all_problem_configs = EditProblemTask.all_configs()
-        self.task_description = None
-        self.short_description = None
+        # Need self.random to be initialized before calling _create_random_urgency_to_impact.
+        self._URGENCY_TO_IMPACT = self._create_random_urgency_to_impact()
+        self.task_description = fake.sentence()
+        self.short_description = fake.sentence()
+        self.cause = fake.sentence()
         self.problem_config = None
-        self.impact = None
-        self.problem_sys_id = None
-        self.assigned_to = None
 
     def setup_goal(self, page: Page) -> tuple[str, dict]:
         # Sample a configuration
         config = self.fixed_config if self.fixed_config else self._get_config()
-        
+
         # Get the task description
-        self.short_description = f"Edit problem {self.problem_config['template_record']['number']}"
-        self.task_description = f'Referring to company protocol "{self.protocol_name}", edit the problem based on its impact: \n'
-        
+        self.short_description = f"Edit problem {self.problem_config['number']}"
+        self.task_description = f'Referring to company protocol "{self.protocol_name}", edit the problem based on its urgency: \n'
+
         if self.level == 2:
-            self.task_description += (
-                f"\nFor {self.impact} impact problems:\n"
-                f"- Set priority to {self._IMPACT_TO_CONFIG.get(self.impact, self._DEFAULT_CONFIG)['priority']}\n"
-                f"- Remove assigned user\n"
-            )
+            self.task_description += "Set task impact based on urgency"
 
         goal, info = super().setup_goal(page=page, config=config)
         return goal, info
 
-    def _get_target_and_candidate_configs(self, impact):
-        # Get the target config and a random candidate config
-        target_config = self._IMPACT_TO_CONFIG.get(impact, self._DEFAULT_CONFIG)
-        
+    def _create_random_urgency_to_impact(self):
+        # Create a random urgency to impact mapping
+        urgency_to_impact = {}
+        for urgency in range(1, 4):
+            impact = self.random.randint(1, 3)
+            urgency_to_impact[urgency] = impact
+        return urgency_to_impact
+
+    def _get_target_and_candidate_configs(self):
+        # Sample a random urgency level
+        urgency = self.random.choice(list(self._URGENCY_TO_IMPACT.keys()))
+
+        # Get the target config based on urgency
+        target_impact = self._URGENCY_TO_IMPACT[urgency]
+        # Work notes is a required field, so we need to add a placeholder value.
+        target_config = {"impact": target_impact, "work_notes": "Update impact"}
+
         # Get all possible configs except the target one
-        candidate_configs = [(imp, conf) for imp, conf in self._IMPACT_TO_CONFIG.items() 
-                           if imp != impact]
-        if impact not in self._IMPACT_TO_CONFIG:
-            candidate_configs.append(("default", self._DEFAULT_CONFIG))
-        
+        candidate_configs = [
+            (urg, imp) for urg, imp in self._URGENCY_TO_IMPACT.items() if urg != urgency
+        ]
+        if not candidate_configs:
+            candidate_configs.append((3, 3))
+
         # Choose a random candidate
         random_index = self.random.randint(0, len(candidate_configs) - 1)
-        candidate_impact, candidate_config = candidate_configs[random_index]
-        
-        return target_config, candidate_impact, candidate_config
+        candidate_urgency, candidate_impact = candidate_configs[random_index]
+        # Work notes is a required field, so we need to add a placeholder value.
+        candidate_config = {"impact": candidate_impact, "work_notes": "Update impact"}
+
+        return target_config, urgency, candidate_config, candidate_urgency
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
-        # Sample a problem configuration if not specified
-        if self.problem_config is None:
-            random_index = self.random.randint(0, len(self.all_problem_configs) - 1)
-            self.problem_config = self.all_problem_configs[random_index]
-        self.impact = self.problem_config["template_record"]["impact"]
-        self.problem_sys_id = self.problem_config["template_record"]["sys_id"]
-        self.assigned_to = self.problem_config["template_record"]["assigned_to"]
-
         # Get the target and candidate configurations
-        target_config, candidate_impact, candidate_config = self._get_target_and_candidate_configs(self.impact)
+        target_config, target_urgency, candidate_config, candidate_urgency = (
+            self._get_target_and_candidate_configs()
+        )
+
+        problem_record = {
+            "made_sla": True,
+            "upon_reject": "cancel",
+            "cause_notes": f" <p>{self.cause}</p> ",
+            "fix_notes": " placeholder ",  # placeholder value - will not work without a fix note
+            "knowledge": False,
+            "major_problem": False,
+            "sys_domain_path": "/",
+            "short_description": self.short_description,
+            "known_error": False,
+            "description": self.task_description,
+            "closed_at": "",
+            "resolution_code": "fix_applied",
+            "active": True,
+            "impact": 3,  # random impact as we want to change it later.
+            "urgency": int(target_urgency),
+        }
+
+        result = table_api_call(
+            instance=self.instance,
+            table="problem",
+            json=problem_record,
+            method="POST",
+        )["result"]
+        self.problem_config = result
 
         # Create the target task instance
         target_task = EditProblemTask(
             instance=self.instance,
-            record_sys_id=self.problem_sys_id,
+            record_sys_id=result["sys_id"],
             new_values=target_config,
             is_validated=True,
             used_in_level_2=True,
@@ -508,7 +595,7 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
         # Create the candidate task instance
         candidate_task = EditProblemTask(
             instance=self.instance,
-            record_sys_id=self.problem_sys_id,
+            record_sys_id=result["sys_id"],
             new_values=candidate_config,
             is_validated=True,
             used_in_level_2=True,
@@ -527,13 +614,13 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
                 is_validated=False,
                 used_in_level_2=True,
             ),
-            # Filter problem list by assigned user
+            # Filter problem list by problem number
             FilterProblemListTask(
                 instance=self.instance,
                 fixed_config={
-                    "filter_columns": ["assigned_to"],
+                    "filter_columns": ["number"],
                     "filter_kind": "AND",
-                    "filter_values": [f"{self.assigned_to}"],
+                    "filter_values": [result["number"]],
                 },
                 is_validated=False,
                 used_in_level_2=True,
@@ -541,9 +628,9 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
             # Conditional task with the target task as the true branch and the candidate task as the false branch
             ConditionalTask(
                 true_branch_task=target_task,
-                true_branch_prefix=f"If the problem impact is {self.impact}, ",
+                true_branch_prefix=f"If the problem urgency is {target_urgency}, ",
                 false_branch_task=candidate_task,
-                false_branch_prefix=f"If the problem impact is {candidate_impact}, ",
+                false_branch_prefix=f"If the problem urgency is {candidate_urgency}, ",
             ),
         ]
 
@@ -555,16 +642,7 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
 
 
 class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
-    """Conditional task for editing incidents based on their priority."""
-
-    _PRIORITY_TO_CONFIG = {
-        "1 - Critical": {"assigned_to": "", "state": "2 - In Progress"},
-        "2 - High": {"assigned_to": "", "state": "1 - New"},
-        "3 - Medium": {"assigned_to": "", "state": "1 - New"},
-        "4 - Low": {"assigned_to": "", "state": "1 - New"},
-    }
-
-    _DEFAULT_CONFIG = {"assigned_to": "", "state": "1 - New"}
+    """Conditional task for editing incidents based on their urgency."""
 
     def __init__(
         self,
@@ -574,7 +652,7 @@ class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
         level: int = 2,
     ) -> None:
         """
-        Create a task that edits incidents differently based on their priority.
+        Create a task that edits incidents differently based on their urgency.
 
         Parameters:
         -----------
@@ -596,64 +674,99 @@ class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
             level=level,
             protocol_name=self.protocol_name,
         )
-        self.all_incident_configs = EditIncidentTask.all_configs()
-        self.task_description = None
-        self.short_description = None
+        # Need self.random to be initialized.
+        self._URGENCY_TO_STATE = self._create_random_urgency_to_state()
+        self.task_description = fake.sentence()
+        self.short_description = fake.sentence()
         self.incident_config = None
-        self.priority = None
-        self.incident_sys_id = None
-        self.assigned_to = None
+        self.urgency = None
 
     def setup_goal(self, page: Page) -> tuple[str, dict]:
         # Sample a configuration
         config = self.fixed_config if self.fixed_config else self._get_config()
-        
+
         # Get the task description
-        self.short_description = f"Edit incident {self.incident_config['template_record']['number']}"
-        self.task_description = f'Referring to company protocol "{self.protocol_name}", edit the incident based on its priority: \n'
-        
+        self.short_description = f"Edit incident {self.incident_config['number']}"
+        self.task_description = f'Referring to company protocol "{self.protocol_name}", edit the incident based on its urgency: \n'
+
         if self.level == 2:
             self.task_description += (
-                f"\nFor {self.priority} priority incidents:\n"
-                f"- Set state to {self._PRIORITY_TO_CONFIG.get(self.priority, self._DEFAULT_CONFIG)['state']}\n"
-                f"- Remove assigned user\n"
+                f"\nFor urgency {self.urgency} incidents:\n"
+                f"- Set state to {self._URGENCY_TO_STATE[self.urgency]}\n"
             )
 
         goal, info = super().setup_goal(page=page, config=config)
         return goal, info
 
-    def _get_target_and_candidate_configs(self, priority):
-        # Get the target config and a random candidate config
-        target_config = self._PRIORITY_TO_CONFIG.get(priority, self._DEFAULT_CONFIG)
-        
+    def _create_random_urgency_to_state(self):
+        # Create a random urgency to state mapping
+        urgency_to_state = {}
+        states = ["New", "In Progress", "On Hold", "Resolved", "Closed", "Canceled"]
+        for urgency in range(1, 4):
+            state = self.random.choice(states)
+            urgency_to_state[urgency] = state
+        return urgency_to_state
+
+    def _get_target_and_candidate_configs(self, urgency):
+        # Get the target config based on urgency
+        target_state = self._URGENCY_TO_STATE[urgency]
+        target_config = {"state": target_state}
+
         # Get all possible configs except the target one
-        candidate_configs = [(pri, conf) for pri, conf in self._PRIORITY_TO_CONFIG.items() 
-                           if pri != priority]
-        if priority not in self._PRIORITY_TO_CONFIG:
-            candidate_configs.append(("default", self._DEFAULT_CONFIG))
-        
+        candidate_configs = [
+            (urg, state) for urg, state in self._URGENCY_TO_STATE.items() if urg != urgency
+        ]
+        if not candidate_configs:
+            candidate_configs.append((3, "New"))
+
         # Choose a random candidate
         random_index = self.random.randint(0, len(candidate_configs) - 1)
-        candidate_priority, candidate_config = candidate_configs[random_index]
-        
-        return target_config, candidate_priority, candidate_config
+        candidate_urgency, candidate_state = candidate_configs[random_index]
+        candidate_config = {"state": candidate_state}
+
+        return target_config, candidate_config, candidate_urgency
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
-        # Sample an incident configuration if not specified
-        if self.incident_config is None:
-            random_index = self.random.randint(0, len(self.all_incident_configs) - 1)
-            self.incident_config = self.all_incident_configs[random_index]
-        self.priority = self.incident_config["template_record"]["priority"]
-        self.incident_sys_id = self.incident_config["template_record"]["sys_id"]
-        self.assigned_to = self.incident_config["template_record"]["assigned_to"]
+        # Sample a random urgency level
+        self.urgency = self.random.choice(list(self._URGENCY_TO_STATE.keys()))
 
         # Get the target and candidate configurations
-        target_config, candidate_priority, candidate_config = self._get_target_and_candidate_configs(self.priority)
+        target_config, candidate_config, candidate_urgency = self._get_target_and_candidate_configs(
+            self.urgency
+        )
+
+        # Generate a unique incident number
+        incident_number = "INC" + str(self.random.randint(1000000, 9999999))
+
+        incident_record = {
+            "task_effective_number": incident_number,
+            "number": incident_number,
+            "state": 2,
+            "knowledge": False,
+            "impact": 3,
+            "active": True,
+            "priority": 3,
+            "caller_id": self._base_user_sysid,
+            "short_description": " ".join(fake.words(5)),
+            "description": " ".join(fake.words(10)),
+            "incident_state": int(self.random.choice(range(1, 7))),
+            "urgency": int(self.urgency),
+            "severity": 3,
+            "category": "software",
+        }
+
+        result = table_api_call(
+            instance=self.instance,
+            table="incident",
+            json=incident_record,
+            method="POST",
+        )["result"]
+        self.incident_config = result
 
         # Create the target task instance
         target_task = EditIncidentTask(
             instance=self.instance,
-            record_sys_id=self.incident_sys_id,
+            record_sys_id=result["sys_id"],
             new_values=target_config,
             is_validated=True,
             used_in_level_2=True,
@@ -663,7 +776,7 @@ class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
         # Create the candidate task instance
         candidate_task = EditIncidentTask(
             instance=self.instance,
-            record_sys_id=self.incident_sys_id,
+            record_sys_id=result["sys_id"],
             new_values=candidate_config,
             is_validated=True,
             used_in_level_2=True,
@@ -682,13 +795,13 @@ class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
                 is_validated=False,
                 used_in_level_2=True,
             ),
-            # Filter incident list by assigned user
+            # Filter incident list by incident number
             FilterIncidentListTask(
                 instance=self.instance,
                 fixed_config={
-                    "filter_columns": ["assigned_to"],
+                    "filter_columns": ["number"],
                     "filter_kind": "AND",
-                    "filter_values": [f"{self.assigned_to}"],
+                    "filter_values": [result["number"]],
                 },
                 is_validated=False,
                 used_in_level_2=True,
@@ -696,9 +809,9 @@ class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
             # Conditional task with the target task as the true branch and the candidate task as the false branch
             ConditionalTask(
                 true_branch_task=target_task,
-                true_branch_prefix=f"If the incident priority is {self.priority}, ",
+                true_branch_prefix=f"If the incident urgency is {self.urgency}, ",
                 false_branch_task=candidate_task,
-                false_branch_prefix=f"If the incident priority is {candidate_priority}, ",
+                false_branch_prefix=f"If the incident urgency is {candidate_urgency}, ",
             ),
         ]
 
@@ -709,16 +822,55 @@ class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
         super().teardown()
 
 
+class EditChangeRequestScheduleTask(EditRecordTask):
+    """
+    Task to edit a change request in the system.
+    We re-define this class for correct task description.
+    TODO: merged with the original EditChangeRequestTask.
+    """
+
+    expected_fields_path = EXPECTED_CHANGE_REQUEST_FORM_FIELDS_PATH
+
+    def __init__(
+        self,
+        seed: int = None,
+        instance=None,
+        fixed_config: dict = None,
+        new_values: dict = None,
+        record_sys_id: str = None,
+        record_number: str = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            seed=seed,
+            instance=instance,
+            form_url="/now/nav/ui/classic/params/target/change_request.do",
+            table_label="change_request",
+            prohibited_fields=["state", "first_reported_by_task"],
+            new_values=new_values,
+            fixed_config=fixed_config,
+            record_sys_id=record_sys_id,
+            record_number=record_number,
+        )
+        if self.new_values is None:
+            self.new_values = {"impact": 3}
+        self.__dict__.update(kwargs)
+
+    def get_pretty_printed_description(self) -> str:
+        """
+        Get the task info for this task when used in a private task; Used in L3 compositional tasks.
+        """
+        if self.level == 2:
+            description = "Edit the change request record with the following values:\n"
+            for key, value in self.new_values.items():
+                description += f"- Set {key} to {value}\n"
+            return description
+        else:
+            return ""
+
+
 class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask):
-    """Conditional task for editing change request schedules based on their risk level."""
-
-    _RISK_TO_CONFIG = {
-        "1 - High": {"start_date": "2024-03-20", "end_date": "2024-03-23"},  # 3 days
-        "2 - Medium": {"start_date": "2024-03-20", "end_date": "2024-03-22"},  # 2 days
-        "3 - Low": {"start_date": "2024-03-20", "end_date": "2024-03-21"},  # 1 day
-    }
-
-    _DEFAULT_CONFIG = {"start_date": "2024-03-20", "end_date": "2024-03-21"}  # 1 day default
+    """Conditional task for editing change requests based on their category."""
 
     def __init__(
         self,
@@ -728,7 +880,7 @@ class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask)
         level: int = 2,
     ) -> None:
         """
-        Create a task that edits change request schedules differently based on their risk level.
+        Create a task that edits change requests differently based on their category.
 
         Parameters:
         -----------
@@ -742,7 +894,7 @@ class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask)
         """
         assert level in [2, 3], "Level must be either 2 or 3"
         self.level = level
-        self.protocol_name = "Editing change request schedules"
+        self.protocol_name = "Editing change requests"
         super().__init__(
             seed=seed,
             instance=instance,
@@ -750,64 +902,108 @@ class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask)
             level=level,
             protocol_name=self.protocol_name,
         )
-        self.all_change_configs = EditChangeRequestScheduleTask.all_configs()
-        self.task_description = None
-        self.short_description = None
+        # Need self.random to be initialized.
+        self._CATEGORY_TO_IMPACT = self._create_random_category_to_impact()
+        self.task_description = fake.sentence()
+        self.short_description = fake.sentence()
         self.change_config = None
-        self.risk = None
-        self.change_sys_id = None
-        self.assigned_to = None
+        self.category = None
 
     def setup_goal(self, page: Page) -> tuple[str, dict]:
         # Sample a configuration
         config = self.fixed_config if self.fixed_config else self._get_config()
-        
+
         # Get the task description
-        self.short_description = f"Edit change request {self.change_config['template_record']['number']}"
-        self.task_description = f'Referring to company protocol "{self.protocol_name}", edit the change request schedule based on its risk level: \n'
-        
+        self.short_description = f"Edit change request {self.change_config['number']}"
+        self.task_description = f'Referring to company protocol "{self.protocol_name}", edit the change request based on its category: \n'
+
         if self.level == 2:
             self.task_description += (
-                f"\nFor {self.risk} risk change requests:\n"
-                f"- Set start date to {self._RISK_TO_CONFIG.get(self.risk, self._DEFAULT_CONFIG)['start_date']}\n"
-                f"- Set end date to {self._RISK_TO_CONFIG.get(self.risk, self._DEFAULT_CONFIG)['end_date']}\n"
+                f"\nFor {self.category} change requests:\n"
+                f"- Set impact to {self._CATEGORY_TO_IMPACT[self.category]}\n"
             )
 
         goal, info = super().setup_goal(page=page, config=config)
         return goal, info
 
-    def _get_target_and_candidate_configs(self, risk):
-        # Get the target config and a random candidate config
-        target_config = self._RISK_TO_CONFIG.get(risk, self._DEFAULT_CONFIG)
-        
+    def _create_random_category_to_impact(self):
+        # Create a random category to impact mapping
+        category_to_impact = {}
+        categories = [
+            "Hardware",
+            "Software",
+            "Service",
+            "System Software",
+            "Applications Software",
+            "Network",
+            "Telecom",
+            "Documentation",
+            "Other",
+            "Server Reboot",
+        ]
+        for category in categories:
+            impact = self.random.randint(1, 3)
+            category_to_impact[category] = impact
+        return category_to_impact
+
+    def _get_target_and_candidate_configs(self, category):
+        # Get the target config based on category
+        target_impact = self._CATEGORY_TO_IMPACT[category]
+        target_config = {"impact": target_impact}
+
         # Get all possible configs except the target one
-        candidate_configs = [(r, conf) for r, conf in self._RISK_TO_CONFIG.items() 
-                           if r != risk]
-        if risk not in self._RISK_TO_CONFIG:
-            candidate_configs.append(("default", self._DEFAULT_CONFIG))
-        
+        candidate_configs = [
+            (cat, imp) for cat, imp in self._CATEGORY_TO_IMPACT.items() if cat != category
+        ]
+        if not candidate_configs:
+            candidate_configs.append(("Other", 3))
+
         # Choose a random candidate
         random_index = self.random.randint(0, len(candidate_configs) - 1)
-        candidate_risk, candidate_config = candidate_configs[random_index]
-        
-        return target_config, candidate_risk, candidate_config
+        candidate_category, candidate_impact = candidate_configs[random_index]
+        candidate_config = {"impact": candidate_impact}
+
+        return target_config, candidate_config, candidate_category
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
-        # Sample a change request configuration if not specified
-        if self.change_config is None:
-            random_index = self.random.randint(0, len(self.all_change_configs) - 1)
-            self.change_config = self.all_change_configs[random_index]
-        self.risk = self.change_config["template_record"]["risk"]
-        self.change_sys_id = self.change_config["template_record"]["sys_id"]
-        self.assigned_to = self.change_config["template_record"]["assigned_to"]
+        # Sample a random category
+        self.category = self.random.choice(list(self._CATEGORY_TO_IMPACT.keys()))
 
         # Get the target and candidate configurations
-        target_config, candidate_risk, candidate_config = self._get_target_and_candidate_configs(self.risk)
+        target_config, candidate_config, candidate_category = (
+            self._get_target_and_candidate_configs(self.category)
+        )
+
+        # Generate a unique change request number
+        change_number = "CHG" + str(self.random.randint(1000000, 9999999))
+        change_record = {
+            "number": change_number,
+            "short_description": " ".join(fake.words(5)),
+            "description": " ".join(fake.words(10)),
+            "category": self.category,
+            "impact": self.random.randint(
+                1, 3
+            ),  # Default impact, will be changed based on category
+            "type": "normal",
+            "state": "new",
+            "start_date": "2024-03-20",
+            "end_date": "2024-03-21",
+            "risk": "low",
+            "active": True,
+        }
+
+        result = table_api_call(
+            instance=self.instance,
+            table="change_request",
+            json=change_record,
+            method="POST",
+        )["result"]
+        self.change_config = result
 
         # Create the target task instance
         target_task = EditChangeRequestScheduleTask(
             instance=self.instance,
-            record_sys_id=self.change_sys_id,
+            record_sys_id=result["sys_id"],
             new_values=target_config,
             is_validated=True,
             used_in_level_2=True,
@@ -817,7 +1013,7 @@ class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask)
         # Create the candidate task instance
         candidate_task = EditChangeRequestScheduleTask(
             instance=self.instance,
-            record_sys_id=self.change_sys_id,
+            record_sys_id=result["sys_id"],
             new_values=candidate_config,
             is_validated=True,
             used_in_level_2=True,
@@ -836,13 +1032,13 @@ class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask)
                 is_validated=False,
                 used_in_level_2=True,
             ),
-            # Filter change request list by assigned user
+            # Filter change request list by change number
             FilterChangeRequestListTask(
                 instance=self.instance,
                 fixed_config={
-                    "filter_columns": ["assigned_to"],
+                    "filter_columns": ["number"],
                     "filter_kind": "AND",
-                    "filter_values": [f"{self.assigned_to}"],
+                    "filter_values": [result["number"]],
                 },
                 is_validated=False,
                 used_in_level_2=True,
@@ -850,9 +1046,9 @@ class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask)
             # Conditional task with the target task as the true branch and the candidate task as the false branch
             ConditionalTask(
                 true_branch_task=target_task,
-                true_branch_prefix=f"If the change request risk is {self.risk}, ",
+                true_branch_prefix=f"If the change request category is {self.category}, ",
                 false_branch_task=candidate_task,
-                false_branch_prefix=f"If the change request risk is {candidate_risk}, ",
+                false_branch_prefix=f"If the change request category is {candidate_category}, ",
             ),
         ]
 
@@ -865,4 +1061,10 @@ class EditChangeRequestScheduleConditionalTask(CompositionalTask, HumanEvalTask)
 
 local_vars = locals().copy()
 
-__TASKS__ = [OnBoardUserConditionalTask, EditHardwareConditionalTask, EditProblemConditionalTask, EditIncidentConditionalTask, EditChangeRequestScheduleConditionalTask]
+__TASKS__ = [
+    OnBoardUserConditionalTask,
+    EditHardwareConditionalTask,
+    EditProblemConditionalTask,
+    EditIncidentConditionalTask,
+    EditChangeRequestScheduleConditionalTask,
+]
