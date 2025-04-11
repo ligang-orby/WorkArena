@@ -753,6 +753,7 @@ class EditIncidentConditionalTask(CompositionalTask, HumanEvalTask):
             "urgency": int(self.urgency),
             "severity": 3,
             "category": "software",
+            "hold_reason": "Awaiting Caller",
         }
 
         result = table_api_call(

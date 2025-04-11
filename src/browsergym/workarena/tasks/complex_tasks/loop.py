@@ -115,16 +115,18 @@ class OrderMultipleDevicesTask(CompositionalTask, HumanEvalTask):
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        merged_goal = [self.subgoals[0], 'Go to the hardware store and order the following devices\n']
+        merged_goal = ["Go to the hardware store and order the following devices\n"]
         for i in range(1, len(config), 2):
-            merged_goal.append('Device: ' + config[i].requested_item)
-            merged_goal.append('Quantity: ' + str(config[i].quantity))
-            merged_goal.append('Configuration: ' + str(dict((k, v[1]) for k, v in config[i].requested_configuration.items())))
+            merged_goal.append("Device: " + config[i].requested_item)
+            merged_goal.append("Quantity: " + str(config[i].quantity))
+            merged_goal.append(
+                "Configuration: "
+                + str(dict((k, v[1]) for k, v in config[i].requested_configuration.items()))
+            )
 
-        merged_goal = '\n'.join(merged_goal)
-        print(merged_goal)
+        merged_goal = "\n".join(merged_goal)
 
-        return goal, info
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for ordering multiple devices"""
@@ -149,12 +151,6 @@ class OrderMultipleDevicesTask(CompositionalTask, HumanEvalTask):
                 # Create the order
                 task_class(
                     instance=self.instance,
-                    # fixed_config={
-                    #     "field_name": "name",
-                    #     "pretty_printed_field_name": "Name",
-                    #     "field_value": request_item,
-                    #     "other_fields": {},
-                    # },
                     is_validated=True,
                     used_in_level_2=True,
                 ),
@@ -164,10 +160,6 @@ class OrderMultipleDevicesTask(CompositionalTask, HumanEvalTask):
             config.extend(order_device_subtask)
 
         return config
-
-    def teardown(self) -> None:
-        # No cleanup needed as orders are handled by the system
-        super().teardown()
 
 
 class CreateMultipleUserTask(CompositionalTask, HumanEvalTask):
@@ -201,51 +193,43 @@ class CreateMultipleUserTask(CompositionalTask, HumanEvalTask):
         self.protocol_name = "Creating a new user"
         super().__init__(
             seed=seed,
-            instance=self.instance,
+            instance=instance,
             fixed_config=fixed_config,
             level=level,
             protocol_name=self.protocol_name,
         )
         self.task_description = None
         self.short_description = None
-        self.users: List[Tuple[str, str, str]] = []  # List of (full_name, user_name, user_sys_id)
 
     def setup_goal(self, page: Page) -> tuple[str, dict]:
-        # Generate random names and create users
-        for _ in range(self.num_users):
-            first_name = fake.first_name() + "-" + fake.first_name()
-            last_name = fake.last_name() + "-" + fake.last_name()
-            user_full_name = first_name + " " + last_name
-
-            # Create user
-            user_name, _, user_sys_id = create_user(
-                instance=self.instance,
-                first_name=first_name,
-                last_name=last_name,
-                random=self.random,
-            )
-
-            assert user_sys_id, f"Failed to create user {first_name} {last_name}"
-
-            self.users.append((user_full_name, user_name, user_sys_id))
-
         config = self.fixed_config if self.fixed_config else self._get_config()
 
         # Get the task description
-        user_names = ", ".join([f'"{user[0]}"' for user in self.users])
         self.short_description = f"Create {self.num_users} users"
-        self.task_description = f'Referring to company protocol "{self.protocol_name}" (located in the "Company Protocols" knowledge base) create the following users: {user_names}\n'
+        self.task_description = f'Referring to company protocol "{self.protocol_name}" (located in the "Company Protocols" knowledge base) create the following users\n'
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        return goal, info
+        merged_goal = ["Navigate to the user list and create the following users:\n"]
+        for i in range(
+            1, len(config), 2
+        ):  # Each user has 2 subtasks, get the second one which is CreateUserTask
+            create_task = config[i]
+            merged_goal.append(f"User {i // 2 + 1}:")
+            for field in create_task.task_fields:
+                merged_goal.append(f"{field}: {create_task.template_record[field]}")
+            merged_goal.append("\n")
+
+        merged_goal = "\n".join(merged_goal)
+
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for creating multiple users"""
         config = []
 
         # Add subtasks for each user
-        for user_full_name, user_name, user_sys_id in self.users:
+        for _ in range(self.num_users):
             # Create the user
             create_user_subtask = [
                 # Navigate to the user list
@@ -262,20 +246,9 @@ class CreateMultipleUserTask(CompositionalTask, HumanEvalTask):
                 # Create the user
                 CreateUserTask(
                     instance=self.instance,
-                    fixed_config={
-                        "field_name": "name",
-                        "pretty_printed_field_name": "Name",
-                        "field_value": user_full_name,
-                        "other_fields": {
-                            "first_name": user_full_name.split()[0],
-                            "last_name": user_full_name.split()[1],
-                            "user_name": user_name,
-                            "active": True,
-                        },
-                    },
-                    record_sys_id=user_sys_id,
                     is_validated=True,
                     used_in_level_2=True,
+                    check_record_created=False,
                 ),
             ]
 
@@ -283,22 +256,6 @@ class CreateMultipleUserTask(CompositionalTask, HumanEvalTask):
             config.extend(create_user_subtask)
 
         return config
-
-    def teardown(self) -> None:
-        # Delete all users
-        for _, _, user_sys_id in self.users:
-            user_record = table_api_call(
-                instance=self.instance,
-                table="sys_user",
-                params={"sysparm_query": f"sys_id={user_sys_id}"},
-            )["result"]
-            if user_record:
-                db_delete_from_table(
-                    instance=self.instance,
-                    table="sys_user",
-                    sys_id=user_sys_id,
-                )
-        super().teardown()
 
 
 class DeleteMultipleUserTask(CompositionalTask, HumanEvalTask):
@@ -369,7 +326,17 @@ class DeleteMultipleUserTask(CompositionalTask, HumanEvalTask):
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        return goal, info
+        merged_goal = ["Delete the following users:\n"]
+        for i, user in enumerate(self.users):
+            merged_goal.append(f"User {i+1}:")
+            merged_goal.append(f"Full name: {user[0]}")
+            merged_goal.append(f"Username: {user[1]}")
+            merged_goal.append(f"Sys_id: {user[2]}")
+            merged_goal.append("\n")
+
+        merged_goal = "\n".join(merged_goal)
+
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for deleting multiple users"""
@@ -507,7 +474,20 @@ class OffBoardMultipleUserTask(CompositionalTask, HumanEvalTask):
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        return goal, info
+        merged_goal = [
+            "Offboard the following users by unassigning their hardware asset and deleting their user account:\n"
+        ]
+        for i, user in enumerate(self.users):
+            merged_goal.append(f"User {i+1}:")
+            merged_goal.append(f"Full name: {user[0]}")
+            merged_goal.append(f"Username: {user[1]}")
+            merged_goal.append(f"Sys_id: {user[2]}")
+            merged_goal.append(f"Laptop sys_id: {self.laptop_sys_ids[i]}")
+            merged_goal.append("\n")
+
+        merged_goal = "\n".join(merged_goal)
+
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for offboarding multiple users"""
@@ -639,33 +619,36 @@ class CreateMultipleChangeRequestTask(CompositionalTask, HumanEvalTask):
         )
         self.task_description = None
         self.short_description = None
-        self.requests: List[Tuple[str, str]] = []  # List of (short_description, sys_id)
 
     def setup_goal(self, page: Page) -> tuple[str, dict]:
-        # Generate random change requests
-        for _ in range(self.num_requests):
-            short_description = (
-                f"Change Request {fake.word().capitalize()} {fake.word().capitalize()}"
-            )
-            self.requests.append((short_description, None))
-
         config = self.fixed_config if self.fixed_config else self._get_config()
 
         # Get the task description
-        request_descriptions = ", ".join([f'"{req[0]}"' for req in self.requests])
         self.short_description = f"Create {self.num_requests} change requests"
-        self.task_description = f'Referring to company protocol "{self.protocol_name}" (located in the "Company Protocols" knowledge base) create the following change requests: {request_descriptions}\n'
+        self.task_description = f'Referring to company protocol "{self.protocol_name}" (located in the "Company Protocols" knowledge base) create the following change requests\n'
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        return goal, info
+        merged_goal = [
+            "Navigate to change request list and create the following change requests:\n"
+        ]
+        for i in range(1, len(config), 2):
+            # Each request has 2 subtasks, get the second one which is CreateChangeRequestTask
+            create_task = config[i]
+            merged_goal.append(f"Change Request {i//2+1}:")
+            for field in create_task.task_fields:
+                merged_goal.append(f"{field}: {create_task.template_record[field]}")
+            merged_goal.append("\n")
+        merged_goal = "\n".join(merged_goal)
+
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for creating multiple change requests"""
         config = []
 
         # Add subtasks for each change request
-        for short_description, _ in self.requests:
+        for _ in range(self.num_requests):
             # Create the change request
             create_request_subtask = [
                 # Navigate to the change request list
@@ -682,19 +665,9 @@ class CreateMultipleChangeRequestTask(CompositionalTask, HumanEvalTask):
                 # Create the change request
                 CreateChangeRequestTask(
                     instance=self.instance,
-                    fixed_config={
-                        "field_name": "short_description",
-                        "pretty_printed_field_name": "Short description",
-                        "field_value": short_description,
-                        "other_fields": {
-                            "type": "Normal",
-                            "priority": "3 - Moderate",
-                            "risk": "3 - Moderate",
-                            "impact": "3 - Moderate",
-                        },
-                    },
                     is_validated=True,
                     used_in_level_2=True,
+                    check_record_created=False,
                 ),
             ]
 
@@ -763,7 +736,18 @@ class CreateMultipleIncidentTask(CompositionalTask, HumanEvalTask):
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        return goal, info
+        merged_goal = ["Navigate to incident list and create the following incidents:\n"]
+        for i in range(1, len(config), 2):
+            # Each incident has 2 subtasks, get the second one which is CreateIncidentTask
+            create_task = config[i]
+            merged_goal.append(f"Incident {i//2+1}:")
+            for field in create_task.task_fields:
+                merged_goal.append(f"{field}: {create_task.template_record[field]}")
+            merged_goal.append("\n")
+
+        merged_goal = "\n".join(merged_goal)
+
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for creating multiple incidents"""
@@ -787,19 +771,9 @@ class CreateMultipleIncidentTask(CompositionalTask, HumanEvalTask):
                 # Create the incident
                 CreateIncidentTask(
                     instance=self.instance,
-                    fixed_config={
-                        "field_name": "short_description",
-                        "pretty_printed_field_name": "Short description",
-                        "field_value": short_description,
-                        "other_fields": {
-                            "priority": "3 - Moderate",
-                            "impact": "3 - Moderate",
-                            "urgency": "3 - Moderate",
-                            "category": "Hardware",
-                        },
-                    },
                     is_validated=True,
                     used_in_level_2=True,
+                    check_record_created=False,
                 ),
             ]
 
@@ -868,7 +842,20 @@ class CreateMultipleHardwareAssetTask(CompositionalTask, HumanEvalTask):
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        return goal, info
+        merged_goal = [
+            "Navigate to the hardware asset list and create the following hardware assets:\n"
+        ]
+        for i in range(1, len(config), 2):
+            # Each asset has 2 subtasks, get the second one which is CreateHardwareAssetTask
+            create_task = config[i]
+            merged_goal.append(f"Asset {i//2+1}:")
+            for field in create_task.task_fields:
+                merged_goal.append(f"{field}: {create_task.template_record[field]}")
+            merged_goal.append("\n")
+
+        merged_goal = "\n".join(merged_goal)
+
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for creating multiple hardware assets"""
@@ -892,20 +879,9 @@ class CreateMultipleHardwareAssetTask(CompositionalTask, HumanEvalTask):
                 # Create the hardware asset
                 CreateHardwareAssetTask(
                     instance=self.instance,
-                    fixed_config={
-                        "field_name": "name",
-                        "pretty_printed_field_name": "Name",
-                        "field_value": name,
-                        "other_fields": {
-                            "model": "Dell Latitude 5420",
-                            "model_category": "Laptop",
-                            "serial_number": f"SN-{self.random.randint(1000000, 9999999)}",
-                            "vendor": "Dell",
-                            "install_status": "1 - Ready",
-                        },
-                    },
                     is_validated=True,
                     used_in_level_2=True,
+                    check_record_created=False,
                 ),
             ]
 
@@ -974,7 +950,18 @@ class CreateMultipleProblemTask(CompositionalTask, HumanEvalTask):
 
         goal, info = super().setup_goal(page=page, config=config)
 
-        return goal, info
+        merged_goal = ["Navigate to the problem list and create the following problems:\n"]
+        for i in range(1, len(config), 2):
+            # Each problem has 2 subtasks, get the second one which is CreateProblemTask
+            create_task = config[i]
+            merged_goal.append(f"Problem {i//2+1}:")
+            for field in create_task.task_fields:
+                merged_goal.append(f"{field}: {create_task.template_record[field]}")
+            merged_goal.append("\n")
+
+        merged_goal = "\n".join(merged_goal)
+
+        return merged_goal, info
 
     def _get_config(self) -> list[AbstractServiceNowTask]:
         """Create a list of subtasks for creating multiple problems"""
@@ -998,19 +985,9 @@ class CreateMultipleProblemTask(CompositionalTask, HumanEvalTask):
                 # Create the problem
                 CreateProblemTask(
                     instance=self.instance,
-                    fixed_config={
-                        "field_name": "short_description",
-                        "pretty_printed_field_name": "Short description",
-                        "field_value": short_description,
-                        "other_fields": {
-                            "priority": "3 - Moderate",
-                            "impact": "3 - Moderate",
-                            "urgency": "3 - Moderate",
-                            "category": "Hardware",
-                        },
-                    },
                     is_validated=True,
                     used_in_level_2=True,
+                    check_record_created=False,
                 ),
             ]
 
@@ -1024,112 +1001,6 @@ class CreateMultipleProblemTask(CompositionalTask, HumanEvalTask):
         super().teardown()
 
 
-class CreateMultipleItemRequestTask(CompositionalTask, HumanEvalTask):
-    def __init__(
-        self,
-        seed: int = None,
-        instance: SNowInstance = None,
-        fixed_config: list[AbstractServiceNowTask] = None,
-        level: int = 2,
-        num_requests: int = 3,
-    ) -> None:
-        """
-        Multiple Item Request Creation Task
-
-        Parameters:
-        -----------
-        instance: SNowInstance
-            The ServiceNow instance to run the task on.
-        fixed_config: list[AbstractServiceNowTask]
-            A list of subtasks.
-        level: int
-            The level of the task; choice between 2 and 3. L2 will have all the info in the the goal and start in the SNOW home page.
-            L3 will start in a private task page describing the information needed to complete the task and the related company protocol
-            to complete it.
-        num_requests: int
-            Number of item requests to create (default: 3)
-        """
-        assert level in [2, 3], "Level must be either 2 or 3"
-        self.level = level
-        self.num_requests = num_requests
-        self.protocol_name = "Creating an item request"
-        super().__init__(
-            seed=seed,
-            instance=instance,
-            fixed_config=fixed_config,
-            level=level,
-            protocol_name=self.protocol_name,
-        )
-        self.task_description = None
-        self.short_description = None
-        self.requests: List[Tuple[str, str]] = []  # List of (short_description, sys_id)
-
-    def setup_goal(self, page: Page) -> tuple[str, dict]:
-        # Generate random item requests
-        for _ in range(self.num_requests):
-            short_description = (
-                f"Item Request {fake.word().capitalize()} {fake.word().capitalize()}"
-            )
-            self.requests.append((short_description, None))
-
-        config = self.fixed_config if self.fixed_config else self._get_config()
-
-        # Get the task description
-        request_descriptions = ", ".join([f'"{req[0]}"' for req in self.requests])
-        self.short_description = f"Create {self.num_requests} item requests"
-        self.task_description = f'Referring to company protocol "{self.protocol_name}" (located in the "Company Protocols" knowledge base) create the following item requests: {request_descriptions}\n'
-
-        goal, info = super().setup_goal(page=page, config=config)
-
-        return goal, info
-
-    def _get_config(self) -> list[AbstractServiceNowTask]:
-        """Create a list of subtasks for creating multiple item requests"""
-        config = []
-
-        # Add subtasks for each item request
-        for short_description, _ in self.requests:
-            # Create the item request
-            create_request_subtask = [
-                # Navigate to the service catalog
-                AllMenuTask(
-                    instance=self.instance,
-                    fixed_config={
-                        "application": "Self-Service",
-                        "module": "Service Catalog",
-                        "url": "/now/nav/ui/classic/params/target/sc_req_item_list.do",
-                    },
-                    is_validated=False,
-                    used_in_level_2=True,
-                ),
-                # Create the item request
-                CreateItemRequestTask(
-                    instance=self.instance,
-                    fixed_config={
-                        "field_name": "short_description",
-                        "pretty_printed_field_name": "Short description",
-                        "field_value": short_description,
-                        "other_fields": {
-                            "priority": "3 - Moderate",
-                            "quantity": "1",
-                            "request": "Standard Laptop",
-                        },
-                    },
-                    is_validated=True,
-                    used_in_level_2=True,
-                ),
-            ]
-
-            # Add subtasks for this item request
-            config.extend(create_request_subtask)
-
-        return config
-
-    def teardown(self) -> None:
-        # No cleanup needed as item requests are handled by the system
-        super().teardown()
-
-
 __TASKS__ = [
     OffBoardMultipleUserTask,
     DeleteMultipleUserTask,
@@ -1138,6 +1009,5 @@ __TASKS__ = [
     CreateMultipleIncidentTask,
     CreateMultipleHardwareAssetTask,
     CreateMultipleProblemTask,
-    CreateMultipleItemRequestTask,
     OrderMultipleDevicesTask,
 ]
