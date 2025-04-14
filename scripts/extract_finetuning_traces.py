@@ -15,9 +15,11 @@ import logging
 import os
 import pickle
 import playwright
-
+from time import sleep
 from browsergym.core import env
 from browsergym.workarena import ALL_WORKARENA_TASKS
+from browsergym.workarena.tasks.complex_tasks import ALL_COMPLEX_TASKS
+
 from collections import defaultdict
 from tenacity import retry, stop_after_attempt, wait_fixed
 from time import time
@@ -143,14 +145,18 @@ def extract_trace(task_cls, headless=True):
 
     browser_env.reset()
 
-    # L1
-    browser_env.task.cheat(browser_env.page, browser_env.chat.messages)
+    # L1 tasks can just can cheat() directly.
+    # browser_env.task.cheat(browser_env.page, browser_env.chat.messages)
 
-    # L2
-    # for i in range(len(env.task)):
-    #     sleep(1)
-    #     env.chat.add_message(role="assistant", msg=f'Executing subtask {i}: {env.task.subtasks[i]}')
-    #     env.task.cheat(page=env.page, chat_messages=env.chat.messages, subtask_idx=i)
+    # L2 tasks need to loop over all subtasks.
+    for i in range(len(browser_env.task)):
+        sleep(1)
+        browser_env.chat.add_message(
+            role="assistant", msg=f"Executing subtask {i}: {browser_env.task.subtasks[i]}"
+        )
+        browser_env.task.cheat(
+            page=browser_env.page, chat_messages=browser_env.chat.messages, subtask_idx=i
+        )
 
     # For gold traces, we don't have to validate the task
     # reward, done, message, info = env.task.validate(page=env.page, chat_messages=env.chat.messages)
@@ -169,17 +175,19 @@ def extract_trace(task_cls, headless=True):
 if __name__ == "__main__":
     os.makedirs("trace_profiling", exist_ok=True)
 
-    NUM_TRACES_PER_TASK = 10
+    NUM_TRACES_PER_TASK = 1
 
-    tasks = [t for t in ALL_L1_TASKS if "Order" in str(t)]
+    # tasks = [t for t in ALL_L1_TASKS if "Order" in str(t)]
+    tasks = ALL_COMPLEX_TASKS
+
     print("In total, there are", len(tasks), "tasks")
     for task in tasks:
         print(task)
 
     task_traces = defaultdict(list)
-    for task in tasks:
+    for i, task in enumerate(tasks):
         name = str(task).split(".")[-1][:-2]
-        print("Task:", name)
+        print(f"Task {i+1}/{len(tasks)}: {name}")
 
         with open(f"trace_profiling/{name}.pickle", "wb") as f:
             for i in range(NUM_TRACES_PER_TASK):
@@ -189,4 +197,5 @@ if __name__ == "__main__":
                     pickle.dump(trace, f)
                 except Exception as e:
                     print(f"Error extracting trace {i+1}/{NUM_TRACES_PER_TASK}: {e}")
-                    input("Press Enter to continue...")
+                    raise e
+                    # input("Press Enter to continue...")

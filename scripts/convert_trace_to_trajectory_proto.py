@@ -3,6 +3,7 @@ import glob
 import pickle
 import json
 import os
+import lzma
 
 
 from orby.trajectory_collector.utils import record_utils
@@ -11,7 +12,7 @@ from orby.digitalagent.utils import file_utils
 
 
 files = glob.glob("trace_profiling/*.pickle")
-debug_output_base_dir = "debug_output/"
+debug_output_base_dir = "complex_tasks/"
 
 for file in files:
     print("Converting", file)
@@ -20,6 +21,7 @@ for file in files:
 
         count = 0
         while True:
+            print(f"Processing trace {count}")
             try:
                 trace = pickle.load(f)
             except Exception as e:
@@ -45,10 +47,13 @@ for file in files:
                 )
 
                 action_string = step.get("action")
+                bid = step.get("bid")
+                if action_string == 'click':
+                    action_string = f'click("{bid}")'
                 if step.get('args'):
-                    action_string += ' args: ' + str(step.get("args"))
+                    action_string += '\nargs: ' + str(step.get("args"))
                 if step.get('kwargs'):
-                    action_string += ' kwargs: ' + str(step.get("kwargs"))
+                    action_string += '\nkwargs: ' + str(step.get("kwargs"))
 
                 action_data = record_utils.record_action_data_from_browser_gym_interaction(
                     domain="",
@@ -66,8 +71,8 @@ for file in files:
             trajectory_data.success.CopyFrom(TrajectoryData.ResultSuccess(answer=f"Got reward 1.0"))
 
             # Save the object to a file
-            with file_utils.open(os.path.join(debug_output_dir, "trajectory.pb"), "wb") as tf:
-                tf.write(trajectory_data.SerializeToString())
+            with lzma.open(os.path.join(debug_output_dir, "trajectory.pb.xz"), "wb") as f:
+                f.write(trajectory_data.SerializeToString())
 
             debugging_data_row = {
                 "example": "WorkArena",
