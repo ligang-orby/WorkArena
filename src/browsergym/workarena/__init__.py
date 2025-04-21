@@ -25,6 +25,7 @@ from .tasks.list import __TASKS__ as LIST_TASKS
 from .tasks.navigation import __TASKS__ as NAVIGATION_TASKS
 from .tasks.service_catalog import __TASKS__ as SERVICE_CATALOG_TASKS
 from .tasks.compositional.base import CompositionalTask
+from .tasks.complex_tasks import ALL_COMPLEX_TASKS
 
 ALL_WORKARENA_TASKS = [
     *ALL_COMPOSITIONAL_TASKS_L2,
@@ -47,7 +48,7 @@ ATOMIC_TASKS = [
 
 
 # register the WorkArena benchmark
-for task in ALL_WORKARENA_TASKS:
+for task in ALL_WORKARENA_TASKS + ALL_COMPLEX_TASKS:
     register_task(
         task.get_task_id(),
         task,
