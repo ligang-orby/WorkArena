@@ -291,16 +291,14 @@ class CompareHardwareDate(CompositionalTask, HumanEvalTask):
         found_serial = False
         found_date = False
 
-        for message in chat_messages:
-            if isinstance(message, dict):
-                message_text = message.get("message", "")
-            else:
-                message_text = message
+        answer = ""
+        if chat_messages and chat_messages[-1]["role"] == "assistant":
+            answer = chat_messages[-1]["message"]
 
-            if correct_serial in message_text:
-                found_serial = True
-            if correct_date in message_text:
-                found_date = True
+        if correct_serial in answer:
+            found_serial = True
+        if correct_date in answer:
+            found_date = True
 
         # Return validation results
         if found_serial and found_date:
@@ -513,17 +511,14 @@ class CompareChangeRequestPriority(CompositionalTask, HumanEvalTask):
         correct_priority = correct_change["priority"]
         found_number = False
         found_priority = False
+        answer = ""
+        if chat_messages and chat_messages[-1]["role"] == "assistant":
+            answer = chat_messages[-1]["message"]
 
-        for message in chat_messages:
-            if isinstance(message, dict):
-                message_text = message.get("message", "")
-            else:
-                message_text = message
-
-            if correct_number in message_text:
-                found_number = True
-            if str(correct_priority) in message_text:
-                found_priority = True
+        if correct_number in answer:
+            found_number = True
+        if str(correct_priority) in answer:
+            found_priority = True
 
         # Return validation results
         if found_number and found_priority:
@@ -737,16 +732,14 @@ class CompareProblemPriority(CompositionalTask, HumanEvalTask):
         found_number = False
         found_priority = False
 
-        for message in chat_messages:
-            if isinstance(message, dict):
-                message_text = message.get("message", "")
-            else:
-                message_text = message
+        answer = ""
+        if chat_messages and chat_messages[-1]["role"] == "assistant":
+            answer = chat_messages[-1]["message"]
 
-            if correct_number in message_text:
-                found_number = True
-            if str(correct_priority) in message_text:
-                found_priority = True
+        if correct_number in answer:
+            found_number = True
+        if str(correct_priority) in answer:
+            found_priority = True
 
         # Return validation results
         if found_number and found_priority:
@@ -961,16 +954,14 @@ class CompareIncidentBusinessDuration(CompositionalTask, HumanEvalTask):
         found_number = False
         found_duration = False
 
-        for message in chat_messages:
-            if isinstance(message, dict):
-                message_text = message.get("message", "")
-            else:
-                message_text = message
+        answer = ""
+        if chat_messages and chat_messages[-1]["role"] == "assistant":
+            answer = chat_messages[-1]["message"]
 
-            if correct_number in message_text:
-                found_number = True
-            if str(correct_duration) in message_text:
-                found_duration = True
+        if correct_number in answer:
+            found_number = True
+        if str(correct_duration) in answer:
+            found_duration = True
 
         # Return validation results
         if found_number and found_duration:
@@ -1175,16 +1166,14 @@ class CompareExpenseLineAmountTask(CompositionalTask, HumanEvalTask):
         found_number = False
         found_amount = False
 
-        for message in chat_messages:
-            if isinstance(message, dict):
-                message_text = message.get("message", "")
-            else:
-                message_text = message
+        answer = ""
+        if chat_messages and chat_messages[-1]["role"] == "assistant":
+            answer = chat_messages[-1]["message"]
 
-            if correct_number in message_text:
-                found_number = True
-            if str(correct_amount) in message_text:
-                found_amount = True
+        if correct_number in answer:
+            found_number = True
+        if str(correct_amount) in answer:
+            found_amount = True
 
         # Return validation results
         if found_number and found_amount:
