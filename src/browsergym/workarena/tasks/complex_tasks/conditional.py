@@ -555,6 +555,11 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
         target_config, target_urgency, candidate_config, candidate_urgency = (
             self._get_target_and_candidate_configs()
         )
+        target_impact = target_config["impact"]
+
+        # Select a random impact different than the target impact to create the problem record.
+        non_target_impact = [v for v in range(1, 4) if v != target_impact]
+        non_target_impact = self.random.choice(non_target_impact)
 
         problem_record = {
             "made_sla": True,
@@ -570,7 +575,7 @@ class EditProblemConditionalTask(CompositionalTask, HumanEvalTask):
             "closed_at": "",
             "resolution_code": "fix_applied",
             "active": True,
-            "impact": 3,  # random impact as we want to change it later.
+            "impact": int(non_target_impact),  # impact diferent than target impact as we want to change it later.
             "urgency": int(target_urgency),
         }
 
